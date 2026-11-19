@@ -261,17 +261,29 @@ async function openSession(id) {
 }
 
 /* ---------- websocket ---------- */
-function connect(id) {
+async function recover() {
+  S.current = null; S.pending = {};
+  await loadSessions();
+  S.sessions.length ? await openSession(S.sessions[0].id) : await newSession();
+  note("That session was gone (a free host resets its storage when it restarts). Opened a fresh one.", true);
+}
+function connect(id, attempt = 0) {
   if (S.ws) { S.ws.onclose = null; S.ws.close(); }
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/sessions/${id}`);
   S.ws = ws;
   ws.onmessage = e => onEvent(JSON.parse(e.data));
-  ws.onclose = () => {
+  ws.onclose = async e => {
     if (S.ws !== ws || !S.current || S.current.id !== id) return;
+    let gone = e.code === 4404;
+    if (!gone) {
+      try { gone = (await fetch(`/api/sessions/${id}`)).status === 404; } catch (_) {}
+    }
+    if (gone) return recover();
     note("Connection lost. Reconnecting...", true);
-    setTimeout(() => { if (S.ws === ws && S.current && S.current.id === id) connect(id); }, 1500);
+    setTimeout(() => { if (S.ws === ws && S.current && S.current.id === id) connect(id, attempt + 1); },
+               Math.min(1500 * (attempt + 1), 10000));
   };
-  ws.onopen = () => { if ($("msg").textContent.startsWith("Connection lost")) note(""); };
+  ws.onopen = () => { attempt = 0; if ($("msg").textContent.startsWith("Connection lost")) note(""); };
 }
 function onEvent(ev) {
   const msgs = S.current.messages, key = `${ev.parent_id}:${ev.agent_id}`;

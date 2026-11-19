@@ -514,6 +514,7 @@ async def handle_prompt(send, sid: int, data: dict) -> None:
 @app.websocket("/ws/sessions/{sid}")
 async def session_socket(ws: WebSocket, sid: int):
     if not q("SELECT id FROM sessions WHERE id=?", (sid,), one=True):
+        await ws.accept()  # accept first so the browser sees close code 4404, not a bare 403
         await ws.close(code=4404)
         return
     await ws.accept()
