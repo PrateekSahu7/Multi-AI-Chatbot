@@ -70,6 +70,36 @@ textarea{flex:1;resize:vertical;min-height:52px;max-height:200px;padding:8px 10p
   .panel{min-height:240px}
 }
 @media (prefers-reduced-motion:reduce){.working::after{animation:none;content:"..."}}
+
+/* ---------- theme support ---------- */
+body[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#111827;--ink:#e5e7eb;--muted:#a7b3c2;--line:#374151;
+  --panel:#1f2937;--accent:#5eead4;--err:#fca5a5;--errbg:#451f25;
+}
+body[data-theme="dark"] aside{background:#17212f;border-right-color:var(--line)}
+body[data-theme="dark"] footer{background:#17212f;border-top-color:var(--line)}
+body[data-theme="dark"] #sessions li.active{background:#263548}
+body[data-theme="dark"] #sessions .open{color:var(--ink)}
+body[data-theme="dark"] details input,
+body[data-theme="dark"] details select,
+body[data-theme="dark"] textarea,
+body[data-theme="dark"] input,
+body[data-theme="dark"] select{
+  background:#111827;color:var(--ink);border-color:#4b5563;
+}
+body[data-theme="dark"] .chip{background:#1f2937;color:var(--ink);border-color:#4b5563}
+body[data-theme="dark"] .chip[aria-pressed="true"]{background:#243b43}
+body[data-theme="dark"] .panel{background:var(--panel);border-color:var(--line)}
+body[data-theme="dark"] .panel header{border-bottom-color:var(--line)}
+body[data-theme="dark"] .agents{border-bottom-color:var(--line)}
+body[data-theme="dark"] .btn.ghost{color:var(--accent);border-color:var(--accent)}
+body[data-theme="dark"] #themeToggle{white-space:nowrap}
+#themeToggle{margin-left:auto;white-space:nowrap}
+@media (max-width:760px){
+  #themeToggle{margin-left:0}
+}
+
 </style>
 </head>
 <body>
@@ -144,6 +174,28 @@ async function api(path, opts) {
 }
 const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
 
+/* ---------- appearance ---------- */
+const THEME_KEY = "mai_theme";
+function applyTheme(theme) {
+  document.body.dataset.theme = theme;
+  const b = $("themeToggle");
+  if (b) {
+    b.textContent = theme === "dark" ? "☀ Light mode" : "☾ Dark mode";
+    b.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+  }
+}
+function toggleTheme() {
+  const next = document.body.dataset.theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
+  applyTheme(next);
+}
+(function initTheme() {
+  let saved = "";
+  try { saved = localStorage.getItem(THEME_KEY) || ""; } catch (_) {}
+  const initial = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  applyTheme(initial);
+})();
+
 /* ---------- agents ---------- */
 async function loadAgents() {
   S.agents = await api("/api/agents");
@@ -162,6 +214,13 @@ function renderAgents() {
     b.onclick = () => { S.selected.has(a.id) ? S.selected.delete(a.id) : S.selected.add(a.id); renderAgents(); render(); updateSend(); };
     box.append(b);
   }
+  const themeButton = el("button", "btn ghost", document.body.dataset.theme === "dark" ? "☀ Light mode" : "☾ Dark mode");
+  themeButton.type = "button";
+  themeButton.id = "themeToggle";
+  themeButton.setAttribute("aria-pressed", document.body.dataset.theme === "dark" ? "true" : "false");
+  themeButton.setAttribute("aria-label", "Toggle dark mode");
+  themeButton.onclick = toggleTheme;
+  box.append(themeButton);
   renderManage();
 }
 function updateSend() {
