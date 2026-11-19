@@ -1,5 +1,7 @@
 """Maps to SRS acceptance criteria AC-01 .. AC-10 (mock agents, no network needed)."""
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import main
 
@@ -185,3 +187,39 @@ def test_groq_provider_uses_groq_url(monkeypatch):
     assert seen["url"] == "https://api.groq.com/openai/v1/chat/completions"
     assert seen["headers"]["Authorization"] == "Bearer gsk_env_key"
     assert seen["body"]["model"] == groq[0]["model"]
+
+
+def test_websocket_to_missing_session_closes_with_4404():
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws/sessions/999999") as ws:
+            ws.receive_json()
+    assert exc.value.code == 4404
+
+
+def test_browser_supplied_key_is_used_but_not_stored(monkeypatch):
+    groq = [a for a in client.get("/api/agents").json() if a["provider"] == "groq"][0]
+    monkeypatch.setattr(main, "REQUIRE_USER_KEYS", True)
+    monkeypatch.setenv("GROQ_API_KEY", "owner-key-must-not-be-used")
+    seen = {}
+
+    async def fake_post(url, headers, body):
+        seen["auth"] = headers.get("Authorization")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(main, "_post", fake_post)
+    sid = new_session()
+    with client.websocket_connect(f"/ws/sessions/{sid}") as ws:
+        # no key from the visitor -> refused, owner's key is NOT used
+        _, results = ask(ws, "hi", [groq["id"]], 1)
+        assert results[0]["status"] == "error" and results[0]["error_kind"] == "authentication"
+        # key from the visitor -> used for this request only
+        ws.send_json({"type": "prompt", "prompt": "again", "agent_ids": [groq["id"]], "keys": {"groq": "visitor-key-1"}})
+        got = []
+        while not got:
+            ev = ws.receive_json()
+            if ev["type"] == "result":
+                got.append(ev)
+    assert got[0]["status"] == "complete" and seen["auth"] == "Bearer visitor-key-1"
+    stored = client.get(f"/api/sessions/{sid}").text
+    assert "visitor-key-1" not in stored and "visitor-key-1" not in client.get("/api/agents").text
+    assert client.get("/api/config").json()["require_user_keys"] is True

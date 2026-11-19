@@ -45,6 +45,9 @@ MAX_PROMPT = int(os.getenv("MAX_PROMPT_CHARS", "4000"))
 TIMEOUT = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "30"))
 KEY_VARS = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
             "groq": "GROQ_API_KEY"}  # credential *references*
+# On a public site set REQUIRE_USER_KEYS=true so visitors must bring their own keys
+# and nobody can spend the owner's quota.
+REQUIRE_USER_KEYS = os.getenv("REQUIRE_USER_KEYS", "").lower() in ("1", "true", "yes")
 KEYS_FILE = Path(os.getenv("KEYS_FILE", str(BASE / "local_keys.json")))  # keys typed in the browser
 
 
@@ -70,6 +73,10 @@ def provider_key(provider: str) -> str | None:
 
 def agent_key(agent: dict) -> str | None:
     """An agent's own key first, then the shared key for its provider."""
+    if agent.get("_key"):  # key the visitor sent with this prompt; never stored
+        return agent["_key"]
+    if REQUIRE_USER_KEYS:
+        return None
     own = SAVED_KEYS.get(f"agent:{agent['id']}")
     if own:
         return own
@@ -318,6 +325,11 @@ def agent_view(a: dict) -> dict:
     }
 
 
+@app.get("/api/config")
+def config():
+    return {"require_user_keys": REQUIRE_USER_KEYS}
+
+
 @app.get("/api/agents")
 def list_agents():
     return [agent_view(a) for a in q("SELECT * FROM agents WHERE enabled=1 ORDER BY id")]
@@ -454,12 +466,25 @@ def check_agents(agent_ids) -> tuple[str | None, list]:
     return None, agents
 
 
-async def run_agent(send, sid: int, parent: int, agent: dict) -> None:
+def clean_keys(raw) -> dict:
+    """Keys sent by the browser with a prompt: used for this request only, never stored or logged."""
+    out = {}
+    if isinstance(raw, dict):
+        for provider, key in raw.items():
+            if provider in KEY_VARS and isinstance(key, str):
+                key = key.strip()
+                if key and len(key) <= 500 and not any(c.isspace() for c in key):
+                    out[provider] = key
+    return out
+
+
+async def run_agent(send, sid: int, parent: int, agent: dict, keys: dict) -> None:
     await send({"type": "status", "parent_id": parent, "agent_id": agent["id"], "status": "processing"})
     start = time.perf_counter()
     status, kind = "complete", None
     try:
-        content = await ADAPTERS[agent["provider"]](agent, build_history(sid, agent["id"]))
+        content = await ADAPTERS[agent["provider"]](
+            {**agent, "_key": keys.get(agent["provider"])}, build_history(sid, agent["id"]))
     except ProviderError as e:
         status, kind, content = "error", e.kind, e.message
     except Exception:  # never leak stack traces to the browser (section 7)
@@ -508,7 +533,8 @@ async def handle_prompt(send, sid: int, data: dict) -> None:
         await send({"type": "prompt_saved", "title": session["title"],
                     "message": {"id": parent, "role": "user", "content": text, "created_at": t}})
 
-    await asyncio.gather(*(run_agent(send, sid, parent, a) for a in agents))
+    keys = clean_keys(data.get("keys"))
+    await asyncio.gather(*(run_agent(send, sid, parent, a, keys) for a in agents))
 
 
 @app.websocket("/ws/sessions/{sid}")

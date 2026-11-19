@@ -30,6 +30,7 @@ summary{cursor:pointer;color:var(--accent)}
 details form{display:grid;gap:6px;margin-top:8px}
 details input,details select{padding:6px;border:1px solid var(--line);border-radius:6px;background:#fff}
 
+p.hint{color:var(--muted);font-size:12px;margin:8px 0 0}
 ul.keys{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
 ul.keys li{display:flex;justify-content:space-between;align-items:center}
 ul.keys button{background:none;border:0;color:var(--err);padding:2px 4px}
@@ -76,14 +77,15 @@ textarea{flex:1;resize:vertical;min-height:52px;max-height:200px;padding:8px 10p
   <h1>Multi-AI Agent Chat</h1>
   <button class="btn" id="newSession">New session</button>
   <ul id="sessions" aria-label="Session history"></ul>
-  <details id="keysBox">
-    <summary>API keys</summary>
+  <details id="keysBox" open>
+    <summary>Your API keys</summary>
     <form id="keyForm">
-      <select name="provider"><option value="openai">OpenAI</option><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="groq">Groq</option></select>
-      <input name="key" type="password" placeholder="Paste API key" autocomplete="off" required>
+      <select name="provider"><option value="groq">Groq</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option><option value="anthropic">Claude</option></select>
+      <input name="key" type="password" placeholder="Paste your API key" autocomplete="off" required>
       <button class="btn ghost" type="submit">Save key</button>
     </form>
     <ul id="keyList" class="keys"></ul>
+    <p class="hint">Keys stay in this browser. They are sent to the server only with your prompts and are never stored there.</p>
   </details>
   <details>
     <summary>Add agent</summary>
@@ -119,7 +121,7 @@ textarea{flex:1;resize:vertical;min-height:52px;max-height:200px;padding:8px 10p
 
 <script>
 const COLORS = ["#0f766e","#b45309","#6d28d9","#be123c","#1d4ed8","#4d7c0f","#a21caf"];
-const S = { agents: [], selected: new Set(), sessions: [], current: null, pending: {}, ws: null };
+const S = { cfg: { require_user_keys: false }, agents: [], selected: new Set(), sessions: [], current: null, pending: {}, ws: null };
 const $ = id => document.getElementById(id);
 const color = a => COLORS[(a.id - 1) % COLORS.length];
 
@@ -156,7 +158,7 @@ function renderAgents() {
     b.style.setProperty("--c", color(a));
     b.setAttribute("aria-pressed", S.selected.has(a.id));
     b.append(el("i"), el("span", "", a.name), el("small", "", a.model));
-    if (!a.configured) { b.append(el("small", "", "no key")); b.title = "The server has no API key for this provider."; }
+    if (!hasKey(a)) { b.append(el("small", "", "no key")); b.title = "Add your API key in the sidebar to use this agent."; }
     b.onclick = () => { S.selected.has(a.id) ? S.selected.delete(a.id) : S.selected.add(a.id); renderAgents(); render(); updateSend(); };
     box.append(b);
   }
@@ -192,34 +194,35 @@ function renderManage() {
   }
 }
 
-/* ---------- api keys (sent to the server, never read back) ---------- */
-const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude", gemini: "Gemini", groq: "Groq" };
-async function loadKeys() {
-  const status = await api("/api/keys");
-  const ul = $("keyList");
+/* ---------- api keys: kept in this browser only ---------- */
+const PROVIDER_NAMES = { groq: "Groq", gemini: "Gemini", openai: "OpenAI", anthropic: "Claude" };
+function localKeys() { try { return JSON.parse(localStorage.getItem("mai_keys") || "{}"); } catch (_) { return {}; } }
+function storeKeys(k) { try { localStorage.setItem("mai_keys", JSON.stringify(k)); return true; } catch (_) { return false; } }
+function hasKey(a) {
+  if (a.provider === "mock" || a.provider === "custom") return a.configured;
+  return !!localKeys()[a.provider] || (!S.cfg.require_user_keys && a.configured);
+}
+function loadKeys() {
+  const keys = localKeys(), ul = $("keyList");
   ul.replaceChildren();
-  for (const [p, has] of Object.entries(status)) {
-    const li = el("li", "", `${PROVIDER_NAMES[p] || p}: ${has ? "key set" : "no key"}`);
-    if (has) {
+  for (const [p, name] of Object.entries(PROVIDER_NAMES)) {
+    const li = el("li", "", `${name}: ${keys[p] ? "saved in this browser" : "no key"}`);
+    if (keys[p]) {
       const b = el("button", "", "Remove");
-      b.onclick = async () => {
-        try { await api(`/api/keys/${p}`, { method: "DELETE" }); await loadKeys(); await loadAgents(); }
-        catch (err) { note(err.message); }
-      };
+      b.onclick = () => { const k = localKeys(); delete k[p]; storeKeys(k); loadKeys(); renderAgents(); };
       li.append(b);
     }
     ul.append(li);
   }
 }
-$("keyForm").onsubmit = async e => {
+$("keyForm").onsubmit = e => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    await post("/api/keys", { provider: f.get("provider"), key: f.get("key") });
-    e.target.reset();
-    await loadKeys(); await loadAgents();
-    note("Key saved on the server.", true);
-  } catch (err) { note(err.message); }
+  const f = new FormData(e.target), key = String(f.get("key")).trim();
+  if (!key || /\s/.test(key) || key.length > 500) return note("That does not look like an API key.");
+  const k = localKeys(); k[f.get("provider")] = key;
+  if (!storeKeys(k)) return note("This browser blocked saving the key (private mode?).");
+  e.target.reset(); loadKeys(); renderAgents();
+  note("Key saved in this browser.", true);
 };
 
 /* ---------- sessions ---------- */
@@ -306,7 +309,7 @@ function onEvent(ev) {
 }
 function transmit(payload) {
   if (!S.ws || S.ws.readyState !== 1) { note("Not connected yet. Try again in a moment."); return false; }
-  S.ws.send(JSON.stringify({ type: "prompt", ...payload }));
+  S.ws.send(JSON.stringify({ type: "prompt", keys: localKeys(), ...payload }));
   return true;
 }
 function submit() {
@@ -367,7 +370,8 @@ $("send").onclick = submit;
 $("prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } });
 (async () => {
   try {
-    await loadAgents(); updateSend(); await loadKeys();
+    try { S.cfg = await api("/api/config"); } catch (_) {}
+    await loadAgents(); updateSend(); loadKeys();
     await loadSessions();
     S.sessions.length ? await openSession(S.sessions[0].id) : await newSession();
   } catch (err) { note("Could not load the app: " + err.message); }

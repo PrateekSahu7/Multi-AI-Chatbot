@@ -48,3 +48,8 @@ Each agent keeps its own key on the server (`local_keys.json`); keys are never s
 
 Build: `pip install -r requirements.txt` | Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 Set `GROQ_API_KEY`, `GEMINI_API_KEY` (and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) under Environment. Free instances lose chat history when they spin down.
+
+## Visitors enter their own API key
+
+The **Your API keys** box saves keys in the visitor's browser (localStorage) and sends them with each prompt; the server never stores them.
+On a public deployment set `REQUIRE_USER_KEYS=true` so server-side keys are never used for visitors.
