@@ -79,7 +79,7 @@ textarea{flex:1;resize:vertical;min-height:52px;max-height:200px;padding:8px 10p
   <details id="keysBox">
     <summary>API keys</summary>
     <form id="keyForm">
-      <select name="provider"><option value="openai">OpenAI</option><option value="anthropic">Claude</option><option value="gemini">Gemini</option></select>
+      <select name="provider"><option value="openai">OpenAI</option><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="groq">Groq</option></select>
       <input name="key" type="password" placeholder="Paste API key" autocomplete="off" required>
       <button class="btn ghost" type="submit">Save key</button>
     </form>
@@ -92,6 +92,7 @@ textarea{flex:1;resize:vertical;min-height:52px;max-height:200px;padding:8px 10p
         <option value="openai">OpenAI (GPT)</option>
         <option value="anthropic">Anthropic (Claude)</option>
         <option value="gemini">Google (Gemini)</option>
+        <option value="groq">Groq</option>
         <option value="custom">Other (OpenAI-compatible)</option>
         <option value="mock">Mock (testing)</option>
       </select>
@@ -192,7 +193,7 @@ function renderManage() {
 }
 
 /* ---------- api keys (sent to the server, never read back) ---------- */
-const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude", gemini: "Gemini" };
+const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude", gemini: "Gemini", groq: "Groq" };
 async function loadKeys() {
   const status = await api("/api/keys");
   const ul = $("keyList");

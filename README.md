@@ -43,3 +43,8 @@ No login (SRS 8.1 allows this for the lab demo), no token streaming, plain-text 
 Use **Add agent** in the sidebar. Pick OpenAI, Claude, Gemini or **Other (OpenAI-compatible)**, then give a name, the model id and the API key.
 For "Other", also give the base URL. Examples: `https://api.groq.com/openai/v1`, `https://openrouter.ai/api/v1`, `https://api.deepseek.com/v1`, `http://localhost:11434/v1` (Ollama, no key needed).
 Each agent keeps its own key on the server (`local_keys.json`); keys are never sent back to the browser.
+
+## Deploying on Render (free)
+
+Build: `pip install -r requirements.txt` | Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+Set `GROQ_API_KEY`, `GEMINI_API_KEY` (and optionally `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) under Environment. Free instances lose chat history when they spin down.

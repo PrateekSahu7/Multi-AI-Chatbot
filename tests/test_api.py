@@ -165,3 +165,23 @@ def test_anthropic_adapter_and_remove_agent(monkeypatch):
     assert results[0]["content"] == "hi from claude"
     assert client.delete(f"/api/agents/{agent['id']}").status_code == 204
     assert all(a["id"] != agent["id"] for a in client.get("/api/agents").json())
+
+
+def test_groq_provider_uses_groq_url(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_env_key")
+    groq = [a for a in client.get("/api/agents").json() if a["provider"] == "groq"]
+    assert groq and all(a["configured"] for a in groq)
+    seen = {}
+
+    async def fake_post(url, headers, body):
+        seen.update(url=url, headers=headers, body=body)
+        return {"choices": [{"message": {"content": "groq says hi"}}]}
+
+    monkeypatch.setattr(main, "_post", fake_post)
+    sid = new_session()
+    with client.websocket_connect(f"/ws/sessions/{sid}") as ws:
+        _, results = ask(ws, "hi", [groq[0]["id"]], 1)
+    assert results[0]["content"] == "groq says hi"
+    assert seen["url"] == "https://api.groq.com/openai/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer gsk_env_key"
+    assert seen["body"]["model"] == groq[0]["model"]

@@ -43,7 +43,8 @@ _load_env()
 DB_PATH = os.getenv("DB_PATH", str(BASE / "chat.db"))
 MAX_PROMPT = int(os.getenv("MAX_PROMPT_CHARS", "4000"))
 TIMEOUT = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "30"))
-KEY_VARS = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}  # credential *references*
+KEY_VARS = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+            "groq": "GROQ_API_KEY"}  # credential *references*
 KEYS_FILE = Path(os.getenv("KEYS_FILE", str(BASE / "local_keys.json")))  # keys typed in the browser
 
 
@@ -132,6 +133,12 @@ def init_db() -> None:
         cols = [r[1] for r in c.execute("PRAGMA table_info(agents)")]
         if "base_url" not in cols:  # database created by an older version
             c.execute("ALTER TABLE agents ADD COLUMN base_url TEXT")
+        if not c.execute("SELECT 1 FROM agents WHERE provider='groq'").fetchone():
+            c.executemany(
+                "INSERT INTO agents(name, model, provider) VALUES (?,?,'groq')",
+                [("Groq GPT-OSS 20B", "openai/gpt-oss-20b"), ("Groq GPT-OSS 120B", "openai/gpt-oss-120b"),
+                 ("Groq Qwen3", "qwen/qwen3.8-27b")],
+            )
         if not c.execute("SELECT 1 FROM agents WHERE provider='anthropic'").fetchone():
             c.execute("INSERT INTO agents(name, model, provider) VALUES ('Claude','claude-sonnet-5-5','anthropic')")
         c.commit()
@@ -162,7 +169,14 @@ async def _post(url: str, headers: dict, body: dict) -> dict:
     if r.status_code == 429:
         raise ProviderError("rate_limit", "Rate limit or quota reached. Retry later.")
     if r.status_code >= 400:
-        raise ProviderError("provider", f"The provider returned HTTP {r.status_code}.")
+        detail = ""
+        try:  # most providers explain the problem in error.message
+            err = r.json().get("error", {})
+            detail = err.get("message", "") if isinstance(err, dict) else str(err)
+        except (ValueError, AttributeError):
+            pass
+        detail = " ".join(detail.split())[:200]
+        raise ProviderError("provider", f"The provider returned HTTP {r.status_code}." + (f" {detail}" if detail else ""))
     try:
         return r.json()
     except ValueError:
@@ -187,6 +201,10 @@ async def _openai_style(url: str, agent: dict, history: list, key: str | None) -
 
 async def call_openai(agent: dict, history: list) -> str:
     return await _openai_style("https://api.openai.com/v1/chat/completions", agent, history, _key(agent))
+
+
+async def call_groq(agent: dict, history: list) -> str:
+    return await _openai_style("https://api.groq.com/openai/v1/chat/completions", agent, history, _key(agent))
 
 
 async def call_custom(agent: dict, history: list) -> str:
@@ -254,7 +272,7 @@ async def call_mock(agent: dict, history: list) -> str:
 
 
 ADAPTERS = {"mock": call_mock, "openai": call_openai, "gemini": call_gemini,
-            "anthropic": call_anthropic, "custom": call_custom}
+            "anthropic": call_anthropic, "groq": call_groq, "custom": call_custom}
 
 
 def build_history(session_id: int, agent_id: int) -> list:
